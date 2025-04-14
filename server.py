@@ -52,7 +52,22 @@ def parse_args():
     except ValueError:
         print("Error: Port must be a valid integer between 1 and 65535.")
         sys.exit(1)
+
+def enqueue(client, message):
+    if client.state == ClientState.CLOSING:
+        return
+        
+    client.outgoing.append(message)
     
+    try:
+        current_events = selector.get_map()[client.sock].events
+        if not (current_events & selectors.EVENT_WRITE):
+            selector.modify(client.sock, selectors.EVENT_READ | selectors.EVENT_WRITE, client)
+    except KeyError:
+        # socket already passed
+        pass  
+
+
 def flush_outgoing(client):
     while client.outgoing:
         try:
@@ -62,16 +77,27 @@ def flush_outgoing(client):
 
             if sent < len(data):
                 client.outgoing[0] = data[sent:]
-                break
+                # used to be break
+                return
             else:
                 client.outgoing.pop(0)
 
         except BlockingIOError:
-            break
+            return
+            # break
         except Exception as e:
             print(f"Error sending to {client.addr}: {e}")
             cleanup_client(client)
-            break
+            return
+            # break
+    # if not client.outgoing:
+    try:
+        current = selector.get_map()[client.sock].events
+        if current & selectors.EVENT_WRITE:
+            selector.modify(client.sock, selectors.EVENT_READ, client)
+    except Exception as e:
+        print(f"Error modifying selector for {client.addr}: {e}")
+        cleanup_client(client)
 
 def accept_client(server_socket):
     try:
@@ -124,11 +150,11 @@ def handle_join(client, payload: bytes):
     if '\x00' in room or '\x00' in password:
         client.state = 'CLOSING'
         return
-    
+    # maybe indent the two returns for these two functions below - idk...
     if client.room == room:
         if client.state != ClientState.CLOSING:
             msg = b'\x01' + b"You've already apparated into this room. No need for a Time-Turner."
-            client.outgoing.append(build_message(0x9a, msg))
+            enqueue(client, build_message(0x9a, msg))
         return
 
     if room not in rooms:
@@ -136,7 +162,7 @@ def handle_join(client, payload: bytes):
     elif rooms[room]['password'] != password:
         if client.state != ClientState.CLOSING:
             err_msg = b'\x01' + b"Incorrect password. Maybe try 'Alohomora'?"
-            client.outgoing.append(build_message(0x9a, err_msg))
+            enqueue(client, build_message(0x9a, err_msg))
         return
 
     # Switch room if necessary
@@ -146,7 +172,7 @@ def handle_join(client, payload: bytes):
     client.room = room
     rooms[room]['clients'].add(client)
 
-    client.outgoing.append(build_message(0x9a, b'\x00'))
+    enqueue(client, build_message(0x9a, b'\x00'))
     print("JOIN RESPONSE BEING SENT:", build_message(0x9a, b'\x00').hex())
 
 def handle_leave(client):
@@ -158,7 +184,7 @@ def handle_leave(client):
             del rooms[client.room] # delete room if nobody is in it
         client.room = None
         if client.state != ClientState.CLOSING:
-            client.outgoing.append(build_message(0x9a, b'\x00'))  # success response - OK BE CAREFUL HERE BECAUSE IM NOT SURE IF YOU NEED THE 01 at the front - NVM I THINK YOURE GOOD
+            enqueue(client, build_message(0x9a, b'\x00'))  # success response - OK BE CAREFUL HERE BECAUSE IM NOT SURE IF YOU NEED THE 01 at the front - NVM I THINK YOURE GOOD
     else:
         print(f"{client.nick} is not in a room, closing connection") # THIS WILL BE DISCONNECTION FUNCTIONALITY LATER
         client.state = ClientState.CLOSING
@@ -172,7 +198,7 @@ def handle_list_users(client):
             name_bytes = other.nick.encode()
             payload += bytes([len(name_bytes)]) + name_bytes
     if client.state != ClientState.CLOSING:
-        client.outgoing.append(build_message(0x9a, payload))
+        enqueue(client, build_message(0x9a, payload))
         print("LIST USERS RESPONSE BEING SENT:", build_message(0x9a, payload).hex())
 
 def handle_list_rooms(client):
@@ -183,7 +209,7 @@ def handle_list_rooms(client):
         room_bytes = room.encode()
         payload += bytes([len(room_bytes)]) + room_bytes
     if client.state != ClientState.CLOSING:
-        client.outgoing.append(build_message(0x9a, payload))
+        enqueue(client, build_message(0x9a, payload))
         print("LIST ROOMS RESPONSE BEING SENT:", build_message(0x9a, payload).hex())
 
 def handle_message(client, payload: bytes):
@@ -206,7 +232,7 @@ def handle_message(client, payload: bytes):
     if msg_len >= 65536:
         err_msg = b'\x01' + b"Length limit exceeded."
         print("MSG ERROR RESPONSE BEING SENT TOO LONG:", build_message(0x9a, err_msg).hex())
-        client.outgoing.append(build_message(0x9a, err_msg))
+        enqueue(client, build_message(0x9a, err_msg))
         cleanup_client(client)
         # client.state = ClientState.CLOSING
         return
@@ -231,7 +257,7 @@ def handle_message(client, payload: bytes):
         if client.state != ClientState.CLOSING:
             err_msg = b'\x01' + b"That wizard isn't here. Maybe try the Room of Requirement?"
             print("MSG ERROR RESPONSE BEING SENT:", build_message(0x9a, err_msg).hex())
-            client.outgoing.append(build_message(0x9a, err_msg))
+            enqueue(client, build_message(0x9a, err_msg))
             return
     
     sender_nick = client.nick.encode()
@@ -241,7 +267,10 @@ def handle_message(client, payload: bytes):
         struct.pack("!H", len(msg_bytes)) + msg_bytes
     )
 
-    recipient.outgoing.append(build_message(0x12, payload))
+    enqueue(recipient, build_message(0x12, payload))
+    enqueue(client, build_message(0x9a, b'\x00'))
+    # selector.modify(recipient.sock, selectors.EVENT_READ | selectors.EVENT_WRITE, recipient)
+    # selector.modify(client.sock, selectors.EVENT_READ | selectors.EVENT_WRITE, client) # add this line.
 
 def handle_nick(client, payload: bytes):
     # error handling done here
@@ -260,18 +289,18 @@ def handle_nick(client, payload: bytes):
         if other != client and other.nick == new_nick:
             if client.state != ClientState.CLOSING:
                 err_msg = b'\x01' + b"That name's already on the Marauder's Map. Choose another.\n"
-                client.outgoing.append(build_message(0x9a, err_msg))
+                enqueue(client, build_message(0x9a, err_msg))
                 return
     client.nick = new_nick
     if client.state != ClientState.CLOSING:
-        client.outgoing.append(build_message(0x9a, b'\x00'))
+        enqueue(client, build_message(0x9a, b'\x00'))
 
 def handle_no_slash(client):
     # user input error handled thank god
     if client.state != ClientState.CLOSING:
         err_msg = b'\x01' + b"You're talking to the walls. No one is here to listen."
         print("NO-SLASH ERROR RESPONSE BEING SENT:", build_message(0x9a, err_msg).hex())
-        client.outgoing.append(build_message(0x9a, err_msg))
+        enqueue(client, build_message(0x9a, err_msg))
     
 def read_from_client(client):
     # need to account for if the command length is too long
@@ -303,7 +332,7 @@ def read_from_client(client):
                 opcode = 0x9a  # server response
                 payload = b'\x00' + client.nick.encode()  # 0x00 status code + nickname
                 if client.state != ClientState.CLOSING:
-                    client.outgoing.append(build_message(opcode, payload))
+                    enqueue(client, build_message(opcode, payload))
 
                 # Remove that message from buffer
                 client.buffer = b''
@@ -320,7 +349,8 @@ def read_from_client(client):
 
             length = int.from_bytes(client.buffer[0:4], 'big')
             if len(client.buffer) < 7 + length:
-                break  # wait for full packet
+                # used to be break
+                return True
 
             opcode = client.buffer[6]
             print(f"this is what the magic is: {magic}\n")
@@ -357,7 +387,6 @@ def read_from_client(client):
         return False
 
 def server_run(server_socket):
-    print("hi")
     try:
         while True:
             events = selector.select(timeout=1)
@@ -366,22 +395,24 @@ def server_run(server_socket):
                     accept_client(key.fileobj)
                 else:
                     client = key.data
-                    if mask & selectors.EVENT_READ:
-                        if not read_from_client(client):
-                            # don't set state just do this
-                            cleanup_client(client)
-                            continue
-                    if mask & selectors.EVENT_WRITE:
-                        flush_outgoing(client)
-                    
-                    if client.outgoing:
-                        selector.modify(client.sock, selectors.EVENT_READ | selectors.EVENT_WRITE, client)
-                    else:
-                        selector.modify(client.sock, selectors.EVENT_READ, client)
+                    try:
+                        if mask & selectors.EVENT_READ:
+                            if not read_from_client(client):
+                                cleanup_client(client)
+                                continue
+                                
+                        if mask & selectors.EVENT_WRITE:
+                            flush_outgoing(client)
+                            
+                    except Exception as e:
+                        print(f"Error handling client {client.addr}: {e}")
+                        cleanup_client(client)
             
+            # Clean up closing clients
             for c in list(clients.values()):
                 if c.state == ClientState.CLOSING:
                     cleanup_client(c)
+                    
     except Exception as e:
         print(f"Server error: {e}")
             
