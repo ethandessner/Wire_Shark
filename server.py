@@ -121,9 +121,9 @@ def handle_join(client, payload: bytes):
     pw_len = payload[1 + room_len]
     password = payload[2 + room_len : 2 + room_len + pw_len].decode()
 
-    if '\x00' in room or '\x00' in password:
-        client.state = 'CLOSING'
-        return
+    # if '\x00' in room or '\x00' in password:
+    #     client.state = 'CLOSING'
+    #     return
     
     if client.room == room:
         if client.state != ClientState.CLOSING:
@@ -141,7 +141,11 @@ def handle_join(client, payload: bytes):
 
     # Switch room if necessary
     if client.room:
-        rooms[client.room]['clients'].discard(client)
+        old_room = client.room
+        rooms[old_room]['clients'].discard(client)
+        if not rooms[old_room]['clients']:
+            del rooms[old_room]
+        # rooms[client.room]['clients'].discard(client)
 
     client.room = room
     rooms[room]['clients'].add(client)
@@ -166,22 +170,23 @@ def handle_leave(client):
 
 def handle_list_users(client):
     # client seems to handle the errors here
-    payload = b'\x00'
+    payload = b''
     for other in clients.values():
         if other.nick and (client.room is None or other.room == client.room):
             name_bytes = other.nick.encode()
             payload += bytes([len(name_bytes)]) + name_bytes
+    payload = b'\x00' + payload
     if client.state != ClientState.CLOSING:
         client.outgoing.append(build_message(0x9a, payload))
         print("LIST USERS RESPONSE BEING SENT:", build_message(0x9a, payload).hex())
 
 def handle_list_rooms(client):
     # NEED ERROR CODES - ok i think ur good tbh - the client seems to handle this
-    # ok what if there are no rooms???
-    payload = b'\x00'
+    payload = b''
     for room in rooms:
         room_bytes = room.encode()
         payload += bytes([len(room_bytes)]) + room_bytes
+    payload = b'\x00' + payload
     if client.state != ClientState.CLOSING:
         client.outgoing.append(build_message(0x9a, payload))
         print("LIST ROOMS RESPONSE BEING SENT:", build_message(0x9a, payload).hex())
