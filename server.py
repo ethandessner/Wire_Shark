@@ -109,12 +109,12 @@ def build_message(opcode: int, payload: bytes) -> bytes:
 def handle_join(client, payload: bytes):
     # be CAREFUL for when you are closing your shit
     if len(payload) < 2:
-        client.state = 'CLOSING'
+        # client.state = 'CLOSING'
         return
 
     room_len = payload[0]
     if len(payload) < 1 + room_len + 1:
-        client.state = 'CLOSING'
+        # client.state = 'CLOSING'
         return
 
     room = payload[1:1 + room_len].decode()
@@ -181,13 +181,13 @@ def handle_message(client, payload: bytes):
     # verifying boundsss:
     if len(payload) < 3:
         print("bad msssage formatting you fuck!\n")
-        client.state = ClientState.CLOSING
+        # client.state = ClientState.CLOSING
         return
     
     target_len = payload[0]
     if len(payload) < 1 + target_len + 2:
         print("target length is incorrect!\n")
-        client.state = ClientState.CLOSING
+        # client.state = ClientState.CLOSING
         return
     
     target_nick = payload[1:1 + target_len].decode()
@@ -202,7 +202,7 @@ def handle_message(client, payload: bytes):
     # making sure the entire message is here *_*
     if len(payload) < 1 + target_len + 2 + msg_len:
         print("message length is wrong you shitterton!\n")
-        client.state = ClientState.CLOSING
+        # client.state = ClientState.CLOSING
         cleanup_client(client)
         return
     
