@@ -119,6 +119,7 @@ def cleanup_client(client):
         room.remove_client(client)
         if room.is_empty():
             del rooms[client.room]
+
     if client.nick and client.nick.startswith("rand"):
         try:
             index = int(client.nick[4:])
@@ -184,7 +185,7 @@ def handle_join(client, payload: bytes):
 def handle_leave(client):
     # 
     if client.room is not None and client.room in rooms:
-        room =rooms[client.room]
+        room = rooms[client.room]
         print(f"{client.nick} is leaving room {room.name}\n")
         room.remove_client(client)
         if room.is_empty():
@@ -305,7 +306,7 @@ def handle_nick(client, payload: bytes):
                 heapq.heappush(free_indices, index)
         except ValueError:
             pass
-        
+
     client.nick = new_nick
     if client.state != ClientState.CLOSING:
         client.outgoing.append(build_message(0x9a, b'\x00'))
@@ -316,6 +317,26 @@ def handle_no_slash(client):
         err_msg = b'\x01' + b"You're talking to the walls. No one is here to listen."
         print("NO-SLASH ERROR RESPONSE BEING SENT:", build_message(0x9a, err_msg).hex())
         client.outgoing.append(build_message(0x9a, err_msg))
+
+def handle_sorting_hat(client):
+    base = "rand"
+    if free_indices:
+        i = heapq.heappop(free_indices)
+    else:
+        i = 0
+        while i in used_indices:
+            i += 1
+    used_indices.add(i)
+    client.nick = f"{base}{i}"
+    client.state = 'CONNECTED'
+
+    opcode = 0x9a  # server response
+    payload = b'\x00' + client.nick.encode()  # 0x00 status code + nickname
+    if client.state != ClientState.CLOSING:
+        client.outgoing.append(build_message(opcode, payload))
+
+    # Remove that message from buffer
+    client.buffer = b''
     
 def read_from_client(client):
     # need to account for if the command length is too long
@@ -329,29 +350,6 @@ def read_from_client(client):
             return False  # client closed connection
         
         client.buffer += data
-
-        if client.state == 'HANDSHAKE':
-            if b"Is it the Sorting Hat ceremony already?" in client.buffer:
-                print("sorting hat!")
-                # Assign a unique nickname
-                base = "rand"
-                if free_indices:
-                    i = heapq.heappop(free_indices)
-                else:
-                    i = 0
-                    while i in used_indices:
-                        i += 1
-                used_indices.add(i)
-                client.nick = f"{base}{i}"
-                client.state = 'CONNECTED'
-
-                opcode = 0x9a  # server response
-                payload = b'\x00' + client.nick.encode()  # 0x00 status code + nickname
-                if client.state != ClientState.CLOSING:
-                    client.outgoing.append(build_message(opcode, payload))
-
-                # Remove that message from buffer
-                client.buffer = b''
 
         while len(client.buffer) >= 7:
             magic = int.from_bytes(client.buffer[4:6], 'big')
@@ -390,13 +388,15 @@ def read_from_client(client):
                 handle_nick(client, payload)
             elif opcode == 0x15:
                 handle_no_slash(client)
+            elif opcode == 0x9b:
+                handle_sorting_hat(client)
             elif opcode == 0x13:
                 continue
             else:
                 return False
 
-        # if len(client.buffer) > 128:
-        #     client.state = 'CLOSING'
+        if len(client.buffer) > 256:
+            client.state = 'CLOSING'
 
         return True
 
