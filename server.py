@@ -160,7 +160,7 @@ def handle_leave(client):
         if client.state != ClientState.CLOSING:
             client.outgoing.append(build_message(0x9a, b'\x00'))  # success response - OK BE CAREFUL HERE BECAUSE IM NOT SURE IF YOU NEED THE 01 at the front - NVM I THINK YOURE GOOD
     else:
-        print(f"{client.nick} is not in a room, closing connection") # THIS WILL BE DISCONNECTION FUNCTIONALITY LATER
+        print(f"{client.nick} is not in a room, closing connection")
         client.state = ClientState.CLOSING
         # cleanup_client(client) - this causes an error
 
@@ -334,18 +334,22 @@ def read_from_client(client):
                 print("am i here???/")
                 print("handling JOIN")
                 handle_join(client, payload)
-            if opcode == 0x06:
+            elif opcode == 0x06:
                 handle_leave(client)
-            if opcode == 0x0c:
+            elif opcode == 0x0c:
                 handle_list_users(client)
-            if opcode == 0x09:
+            elif opcode == 0x09:
                 handle_list_rooms(client)
-            if opcode == 0x12:
+            elif opcode == 0x12:
                 handle_message(client, payload)
-            if opcode == 0x0f:
+            elif opcode == 0x0f:
                 handle_nick(client, payload)
-            if opcode == 0x15:
+            elif opcode == 0x15:
                 handle_no_slash(client)
+            elif opcode == 0x13:
+                continue
+            else:
+                return False
 
         # if len(client.buffer) > 128:
         #     client.state = 'CLOSING'
