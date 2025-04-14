@@ -296,6 +296,16 @@ def handle_nick(client, payload: bytes):
                 err_msg = b'\x01' + b"That name's already on the Marauder's Map. Choose another.\n"
                 client.outgoing.append(build_message(0x9a, err_msg))
                 return
+
+    if client.nick and client.nick.startswith("rand") and not new_nick.startswith("rand"):
+        try:
+            index = int(client.nick[4:])
+            if index in used_indices:
+                used_indices.remove(index)
+                heapq.heappush(free_indices, index)
+        except ValueError:
+            pass
+        
     client.nick = new_nick
     if client.state != ClientState.CLOSING:
         client.outgoing.append(build_message(0x9a, b'\x00'))
