@@ -4,10 +4,13 @@ import struct
 import sys
 import time
 import random
+import heapq
 
 MAGIC = 0x0417
 selector = selectors.DefaultSelector()
 clients = {}
+used_indices = set()
+free_indices = []
 
 
 class ClientState:
@@ -116,6 +119,14 @@ def cleanup_client(client):
         room.remove_client(client)
         if room.is_empty():
             del rooms[client.room]
+    if client.nick and client.nick.startswith("rand"):
+        try:
+            index = int(client.nick[4:])
+            if index in used_indices:
+                used_indices.remove(index)
+                heapq.heappush(free_indices, index)
+        except ValueError:
+            pass
     clients.pop(client.sock, None)
 
 def build_message(opcode: int, payload: bytes) -> bytes:
@@ -314,13 +325,14 @@ def read_from_client(client):
                 print("sorting hat!")
                 # Assign a unique nickname
                 base = "rand"
-                i = 0
-                while True:
-                    nick = f"{base}{i}"
-                    if all(c.nick != nick for c in clients.values()):
-                        break
-                    i += 1
-                client.nick = nick
+                if free_indices:
+                    i = heapq.heappop(free_indices)
+                else:
+                    i = 0
+                    while i in used_indices:
+                        i += 1
+                used_indices.add(i)
+                client.nick = f"{base}{i}"
                 client.state = 'CONNECTED'
 
                 opcode = 0x9a  # server response
