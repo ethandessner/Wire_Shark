@@ -330,13 +330,9 @@ def handle_sorting_hat(client):
     client.nick = f"{base}{i}"
     client.state = 'CONNECTED'
 
-    opcode = 0x9a  # server response
-    payload = b'\x00' + client.nick.encode()  # 0x00 status code + nickname
+    response = b'\x00' + client.nick.encode()  # 0x00 status code + nickname
     if client.state != ClientState.CLOSING:
-        client.outgoing.append(build_message(opcode, payload))
-
-    # Remove that message from buffer
-    client.buffer = b''
+        client.outgoing.append(build_message(0x9a, response))
     
 def read_from_client(client):
     # need to account for if the command length is too long
@@ -350,6 +346,29 @@ def read_from_client(client):
             return False  # client closed connection
         
         client.buffer += data
+
+        # if client.state == 'HANDSHAKE':
+        #     if b"Is it the Sorting Hat ceremony already?" in client.buffer:
+        #         print("sorting hat!")
+        #         # Assign a unique nickname
+        #         base = "rand"
+        #         if free_indices:
+        #             i = heapq.heappop(free_indices)
+        #         else:
+        #             i = 0
+        #             while i in used_indices:
+        #                 i += 1
+        #         used_indices.add(i)
+        #         client.nick = f"{base}{i}"
+        #         client.state = 'CONNECTED'
+
+        #         opcode = 0x9a  # server response
+        #         payload = b'\x00' + client.nick.encode()  # 0x00 status code + nickname
+        #         if client.state != ClientState.CLOSING:
+        #             client.outgoing.append(build_message(opcode, payload))
+
+        #         # Remove that message from buffer
+        #         client.buffer = b''
 
         while len(client.buffer) >= 7:
             magic = int.from_bytes(client.buffer[4:6], 'big')
@@ -395,8 +414,8 @@ def read_from_client(client):
             else:
                 return False
 
-        if len(client.buffer) > 256:
-            client.state = 'CLOSING'
+        # if len(client.buffer) > 128:
+        #     client.state = 'CLOSING'
 
         return True
 
