@@ -70,8 +70,7 @@ def flush_outgoing(client):
             break
         except Exception as e:
             print(f"Error sending to {client.addr}: {e}")
-            # cleanup_client(client)
-            client.state = ClientState.CLOSING
+            cleanup_client(client)
             break
 
 def accept_client(server_socket):
@@ -151,6 +150,7 @@ def handle_join(client, payload: bytes):
     print("JOIN RESPONSE BEING SENT:", build_message(0x9a, b'\x00').hex())
 
 def handle_leave(client):
+    # 
     if client.room is not None:
         print(f"{client.nick} is leaving room {client.room}\n")
         rooms[client.room]['clients'].discard(client)
@@ -161,56 +161,63 @@ def handle_leave(client):
             client.outgoing.append(build_message(0x9a, b'\x00'))  # success response - OK BE CAREFUL HERE BECAUSE IM NOT SURE IF YOU NEED THE 01 at the front - NVM I THINK YOURE GOOD
     else:
         print(f"{client.nick} is not in a room, closing connection") # THIS WILL BE DISCONNECTION FUNCTIONALITY LATER
-        # client.state = ClientState.CLOSING
+        client.state = ClientState.CLOSING
+        # cleanup_client(client) - this causes an error
 
 def handle_list_users(client):
+    # client seems to handle the errors here
     payload = b'\x00'
     for other in clients.values():
         if other.nick and (client.room is None or other.room == client.room):
             name_bytes = other.nick.encode()
             payload += bytes([len(name_bytes)]) + name_bytes
-        if client.state != ClientState.CLOSING:
-            client.outgoing.append(build_message(0x9a, payload))
-            print("LIST USERS RESPONSE BEING SENT:", build_message(0x9a, payload).hex())
+    if client.state != ClientState.CLOSING:
+        client.outgoing.append(build_message(0x9a, payload))
+        print("LIST USERS RESPONSE BEING SENT:", build_message(0x9a, payload).hex())
 
 def handle_list_rooms(client):
-    # NEED ERROR CODES
+    # NEED ERROR CODES - ok i think ur good tbh - the client seems to handle this
+    # ok what if there are no rooms???
     payload = b'\x00'
     for room in rooms:
         room_bytes = room.encode()
         payload += bytes([len(room_bytes)]) + room_bytes
-        if client.state != ClientState.CLOSING:
-            client.outgoing.append(build_message(0x9a, payload))
-            print("LIST ROOMS RESPONSE BEING SENT:", build_message(0x9a, payload).hex())
+    if client.state != ClientState.CLOSING:
+        client.outgoing.append(build_message(0x9a, payload))
+        print("LIST ROOMS RESPONSE BEING SENT:", build_message(0x9a, payload).hex())
 
 def handle_message(client, payload: bytes):
     # verifying boundsss:
-    if len(payload) < 3:
-        print("bad msssage formatting you fuck!\n")
-        # client.state = ClientState.CLOSING
-        return
+    # if len(payload) < 3:
+    #     print("bad msssage formatting you fuck!\n")
+    #     # client.state = ClientState.CLOSING
+    #     return
     
     target_len = payload[0]
-    if len(payload) < 1 + target_len + 2:
-        print("target length is incorrect!\n")
-        # client.state = ClientState.CLOSING
-        return
+    # if len(payload) < 1 + target_len + 2:
+    #     print("target length is incorrect!\n")
+    #     # client.state = ClientState.CLOSING
+    #     return
     
     target_nick = payload[1:1 + target_len].decode()
     msg_len = int.from_bytes(payload[1 + target_len:1 + target_len + 2], 'big')
 
+    # ok this is a message you left out, should be good now for that error
     if msg_len >= 65536:
-        print("MESSAGE TOO LONG!\n")
+        err_msg = b'\x01' + b"Length limit exceeded."
+        print("MSG ERROR RESPONSE BEING SENT TOO LONG:", build_message(0x9a, err_msg).hex())
+        client.outgoing.append(build_message(0x9a, err_msg))
+        cleanup_client(client)
         # client.state = ClientState.CLOSING
         return
     # this will make you disconnect normally - command too long ^^^^
 
     # making sure the entire message is here *_*
-    if len(payload) < 1 + target_len + 2 + msg_len:
-        print("message length is wrong you shitterton!\n")
-        # client.state = ClientState.CLOSING
-        cleanup_client(client)
-        return
+    # if len(payload) < 1 + target_len + 2 + msg_len:
+    #     print("message length is wrong you shitterton!\n")
+    #     # client.state = ClientState.CLOSING
+    #     cleanup_client(client)
+    #     return
     
     message = payload[1 + target_len + 2 : 1 + target_len + 2 + msg_len].decode()
     print(f"MSG from {client.nick} to {target_nick}: {message}")
@@ -237,6 +244,7 @@ def handle_message(client, payload: bytes):
     recipient.outgoing.append(build_message(0x12, payload))
 
 def handle_nick(client, payload: bytes):
+    # error handling done here
     if len(payload) < 1:
         print("Invalid command.\n")
         # client.state = ClientState.CLOSING
@@ -258,7 +266,13 @@ def handle_nick(client, payload: bytes):
     if client.state != ClientState.CLOSING:
         client.outgoing.append(build_message(0x9a, b'\x00'))
 
-
+def handle_no_slash(client):
+    # user input error handled thank god
+    if client.state != ClientState.CLOSING:
+        err_msg = b'\x01' + b"You're talking to the walls. No one is here to listen."
+        print("NO-SLASH ERROR RESPONSE BEING SENT:", build_message(0x9a, err_msg).hex())
+        client.outgoing.append(build_message(0x9a, err_msg))
+    
 def read_from_client(client):
     # need to account for if the command length is too long
     # edge cases:
@@ -268,7 +282,6 @@ def read_from_client(client):
         data = client.sock.recv(4096)
         print(data)
         if not data:
-            client.state = ClientState.CLOSING
             return False  # client closed connection
         
         client.buffer += data
@@ -330,6 +343,8 @@ def read_from_client(client):
                 handle_message(client, payload)
             if opcode == 0x0f:
                 handle_nick(client, payload)
+            if opcode == 0x15:
+                handle_no_slash(client)
 
         # if len(client.buffer) > 128:
         #     client.state = 'CLOSING'
@@ -354,7 +369,7 @@ def server_run(server_socket):
                     if mask & selectors.EVENT_READ:
                         if not read_from_client(client):
                             # don't set state just do this
-                            # cleanup_client(client)
+                            cleanup_client(client)
                             continue
                     if mask & selectors.EVENT_WRITE:
                         flush_outgoing(client)
