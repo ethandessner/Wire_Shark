@@ -70,7 +70,8 @@ def flush_outgoing(client):
             break
         except Exception as e:
             print(f"Error sending to {client.addr}: {e}")
-            cleanup_client(client)
+            # cleanup_client(client)
+            client.state = ClientState.CLOSING
             break
 
 def accept_client(server_socket):
@@ -267,6 +268,7 @@ def read_from_client(client):
         data = client.sock.recv(4096)
         print(data)
         if not data:
+            client.state = ClientState.CLOSING
             return False  # client closed connection
         
         client.buffer += data
@@ -352,7 +354,7 @@ def server_run(server_socket):
                     if mask & selectors.EVENT_READ:
                         if not read_from_client(client):
                             # don't set state just do this
-                            cleanup_client(client)
+                            # cleanup_client(client)
                             continue
                     if mask & selectors.EVENT_WRITE:
                         flush_outgoing(client)
