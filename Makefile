@@ -1,5 +1,5 @@
-rserver: server.py
-	python3 server.py
+rserver: rserver.py
+	python3 rserver.py
 
 clean:
-	rm -f server
+	rm -f rserver
