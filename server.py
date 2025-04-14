@@ -121,9 +121,9 @@ def handle_join(client, payload: bytes):
     pw_len = payload[1 + room_len]
     password = payload[2 + room_len : 2 + room_len + pw_len].decode()
 
-    # if '\x00' in room or '\x00' in password:
-    #     client.state = 'CLOSING'
-    #     return
+    if '\x00' in room or '\x00' in password:
+        client.state = 'CLOSING'
+        return
     
     if client.room == room:
         if client.state != ClientState.CLOSING:
@@ -170,26 +170,25 @@ def handle_leave(client):
 
 def handle_list_users(client):
     # client seems to handle the errors here
-    payload = b''
+    payload = b'\x00'
     for other in clients.values():
         if other.nick and (client.room is None or other.room == client.room):
             name_bytes = other.nick.encode()
             payload += bytes([len(name_bytes)]) + name_bytes
-    payload = b'\x00' + payload
     if client.state != ClientState.CLOSING:
         client.outgoing.append(build_message(0x9a, payload))
         print("LIST USERS RESPONSE BEING SENT:", build_message(0x9a, payload).hex())
 
 def handle_list_rooms(client):
     # NEED ERROR CODES - ok i think ur good tbh - the client seems to handle this
-    payload = b''
+    payload = b'\x00'
     for room in rooms:
         room_bytes = room.encode()
         payload += bytes([len(room_bytes)]) + room_bytes
-    payload = b'\x00' + payload
     if client.state != ClientState.CLOSING:
         client.outgoing.append(build_message(0x9a, payload))
         print("LIST ROOMS RESPONSE BEING SENT:", build_message(0x9a, payload).hex())
+
 
 def handle_message(client, payload: bytes):
     # verifying boundsss:
