@@ -8,7 +8,7 @@ import random
 MAGIC = 0x0417
 selector = selectors.DefaultSelector()
 clients = {}
-rooms = {}
+
 
 class ClientState:
     HANDSHAKE = "HANDSHAKE"
@@ -26,6 +26,22 @@ class Client:
         self.room = None
         self.nick = None
         self.state = ClientState.HANDSHAKE
+class Room:
+    def __init__(self, name, password):
+        self.name = name
+        self.password = password
+        self.clients = set()
+
+    def add_client(self, client):
+        self.clients.add(client)
+    
+    def remove_client(self, client):
+        self.clients.discard(client)
+
+    def is_empty(self):
+        return len(self.clients) == 0
+    
+rooms: dict[str, Room] = {}
 
 def start_server(host, port):
     random.seed(time.time())
@@ -96,8 +112,9 @@ def cleanup_client(client):
         pass
 
     if client.room and client.room in rooms:
-        rooms[client.room]['clients'].discard(client)
-        if not rooms[client.room]['clients']:
+        room = rooms[client.room]
+        room.remove_client(client)
+        if room.is_empty():
             del rooms[client.room]
     clients.pop(client.sock, None)
 
@@ -117,49 +134,50 @@ def handle_join(client, payload: bytes):
         # client.state = 'CLOSING'
         return
 
-    room = payload[1:1 + room_len].decode()
+    room_name = payload[1:1 + room_len].decode()
     pw_len = payload[1 + room_len]
     password = payload[2 + room_len : 2 + room_len + pw_len].decode()
 
-    if '\x00' in room or '\x00' in password:
+    if '\x00' in room_name or '\x00' in password:
         client.state = 'CLOSING'
         return
     
-    if client.room == room:
+    if client.room == room_name:
         if client.state != ClientState.CLOSING:
             msg = b'\x01' + b"You've already apparated into this room. No need for a Time-Turner."
             client.outgoing.append(build_message(0x9a, msg))
         return
-
-    if room not in rooms:
-        rooms[room] = {'password': password, 'clients': set()}
-    elif rooms[room]['password'] != password:
+    room = rooms.get(room_name)
+    if room is None:
+        room = Room(room_name, password)
+        rooms[room_name] = room
+    elif room.password != password:
         if client.state != ClientState.CLOSING:
             err_msg = b'\x01' + b"Incorrect password. Maybe try 'Alohomora'?"
             client.outgoing.append(build_message(0x9a, err_msg))
         return
 
     # Switch room if necessary
-    if client.room:
-        old_room = client.room
-        rooms[old_room]['clients'].discard(client)
-        if not rooms[old_room]['clients']:
-            del rooms[old_room]
-        # rooms[client.room]['clients'].discard(client)
+    if client.room and client.room in rooms:
+        old_room = rooms[client.room]
+        old_room.remove_client(client)
+        if old_room.is_empty():
+            del rooms[client.room]
 
-    client.room = room
-    rooms[room]['clients'].add(client)
+    client.room = room_name
+    room.add_client(client)
 
     client.outgoing.append(build_message(0x9a, b'\x00'))
     print("JOIN RESPONSE BEING SENT:", build_message(0x9a, b'\x00').hex())
 
 def handle_leave(client):
     # 
-    if client.room is not None:
-        print(f"{client.nick} is leaving room {client.room}\n")
-        rooms[client.room]['clients'].discard(client)
-        if not rooms[client.room]['clients']:
-            del rooms[client.room] # delete room if nobody is in it
+    if client.room is not None and client.room in rooms:
+        room =rooms[client.room]
+        print(f"{client.nick} is leaving room {room.name}\n")
+        room.remove_client(client)
+        if room.is_empty():
+            del rooms[client.room]
         client.room = None
         if client.state != ClientState.CLOSING:
             client.outgoing.append(build_message(0x9a, b'\x00'))  # success response - OK BE CAREFUL HERE BECAUSE IM NOT SURE IF YOU NEED THE 01 at the front - NVM I THINK YOURE GOOD
@@ -182,8 +200,8 @@ def handle_list_users(client):
 def handle_list_rooms(client):
     # NEED ERROR CODES - ok i think ur good tbh - the client seems to handle this
     payload = b'\x00'
-    for room in rooms:
-        room_bytes = room.encode()
+    for room in rooms.values():
+        room_bytes = room.name.encode()
         payload += bytes([len(room_bytes)]) + room_bytes
     if client.state != ClientState.CLOSING:
         client.outgoing.append(build_message(0x9a, payload))
@@ -205,7 +223,7 @@ def handle_message(client, payload: bytes):
     
     target_nick = payload[1:1 + target_len].decode()
     msg_len = int.from_bytes(payload[1 + target_len:1 + target_len + 2], 'big')
-
+    print(f'HIIIIII this is the message length: {msg_len}\n')
     # ok this is a message you left out, should be good now for that error
     if msg_len >= 65536:
         err_msg = b'\x01' + b"Length limit exceeded."
