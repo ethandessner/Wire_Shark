@@ -136,14 +136,11 @@ def build_message(opcode: int, payload: bytes) -> bytes:
     return length_prefix + header + payload
 
 def handle_join(client, payload: bytes):
-    # be CAREFUL for when you are closing your shit
     if len(payload) < 2:
-        # client.state = 'CLOSING'
         return
 
     room_len = payload[0]
     if len(payload) < 1 + room_len + 1:
-        # client.state = 'CLOSING'
         return
 
     room_name = payload[1:1 + room_len].decode()
@@ -191,7 +188,7 @@ def handle_leave(client):
             del rooms[client.room]
         client.room = None
         if client.state != ClientState.CLOSING:
-            client.outgoing.append(build_message(0x9a, b'\x00'))  # success response - OK BE CAREFUL HERE BECAUSE IM NOT SURE IF YOU NEED THE 01 at the front - NVM I THINK YOURE GOOD
+            client.outgoing.append(build_message(0x9a, b'\x00')) 
     else:
         print(f"{client.nick} is not in a room, closing connection")
         client.state = ClientState.CLOSING
@@ -221,24 +218,13 @@ def handle_message(client, payload: bytes):
    
     target_nick = payload[1:1 + target_len].decode()
     msg_len = int.from_bytes(payload[1 + target_len:1 + target_len + 2], 'big')
-    print(f'HIIIIII this is the message length: {msg_len}\n')
-    # ok this is a message you left out, should be good now for that error
     if msg_len >= 65536:
         err_msg = b'\x01' + b"Length limit exceeded."
         print("MSG ERROR RESPONSE BEING SENT TOO LONG:", build_message(0x9a, err_msg).hex())
         client.outgoing.append(build_message(0x9a, err_msg))
         cleanup_client(client)
-        # client.state = ClientState.CLOSING
         return
     # this will make you disconnect normally - command too long ^^^^
-
-    # making sure the entire message is here *_*
-    # if len(payload) < 1 + target_len + 2 + msg_len:
-    #     print("message length is wrong you shitterton!\n")
-    #     # client.state = ClientState.CLOSING
-    #     cleanup_client(client)
-    #     return
-    
     message = payload[1 + target_len + 2 : 1 + target_len + 2 + msg_len].decode()
     print(f"MSG from {client.nick} to {target_nick}: {message}")
 
@@ -265,15 +251,12 @@ def handle_message(client, payload: bytes):
     client.outgoing.append(build_message(0x9a, b'\x00'))
 
 def handle_nick(client, payload: bytes):
-    # error handling done here
     if len(payload) < 1:
         print("Invalid command.\n")
-        # client.state = ClientState.CLOSING
         return
     name_len = payload[0]
     if name_len > 255:
         print("Nick is longer than 255 characters.\n")
-        # client.state = ClientState.CLOSING
         return
     new_nick = payload[1:1 + name_len].decode()
 
@@ -308,19 +291,16 @@ def handle_no_slash(client, payload):
         return
 
     room_len = payload[0]
-    print(f"this is the room length {room_len}")
     if len(payload) < 1 + room_len + 1:
         return
 
     room_name = payload[1:1 + room_len].decode()
-    print(f"this is the room name {room_name}")
     msg_len = payload[1 + room_len + 1]
 
     if len(payload) < 1 + room_len + 2 + msg_len:
         return
 
     message = payload[1 + room_len + 2 : 1 + room_len + 2 + msg_len].decode()
-    print(f"this is the message name {message}")
 
 
     # ensure client is sending from their current room
@@ -336,7 +316,6 @@ def handle_no_slash(client, payload):
         bytes([len(nick_bytes)]) + nick_bytes + b'\x00' +
         bytes([len(msg_bytes)]) + msg_bytes
     )
-    print(f"this is the broadcast message {broadcast_payload}")
 
     for other in rooms[client.room].clients:
         if other.state != ClientState.CLOSING and other.nick != client.nick:
@@ -385,8 +364,6 @@ def read_from_client(client):
             client.buffer = client.buffer[7+length:]  # advance buffer
 
             if opcode == 0x03:
-                print("am i here???/")
-                print("handling JOIN")
                 handle_join(client, payload)
             elif opcode == 0x06:
                 handle_leave(client)
@@ -425,7 +402,6 @@ def server_run(server_socket):
                     client = key.data
                     if mask & selectors.EVENT_READ:
                         if not read_from_client(client):
-                            # don't set state just do this
                             cleanup_client(client)
                             continue
                     if mask & selectors.EVENT_WRITE:
