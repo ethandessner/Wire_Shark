@@ -297,43 +297,12 @@ def handle_nick(client, payload: bytes):
     if client.state != ClientState.CLOSING:
         client.outgoing.append(build_message(0x9a, b'\x00'))
 
-def handle_no_slash(client, payload: bytes):
+def handle_no_slash(client):
     if not client.room or client.room not in rooms:
         if client.state != ClientState.CLOSING:
             err_msg = b'\x01' + b"You're talking to the walls. No one is here to listen."
             client.outgoing.append(build_message(0x9a, err_msg))
         return
-    
-    if len(payload) < 2:
-        return 
-
-    room_len = payload[0]
-    if len(payload) < 1 + room_len + 1:
-        return  
-
-    room_name = payload[1:1 + room_len].decode()
-    msg_len = payload[1 + room_len + 1]
-
-    if len(payload) < 1 + room_len + 2 + msg_len:
-        return 
-
-    message = payload[1 + room_len + 2 : 1 + room_len + 2 + msg_len].decode()
-
-    if client.room != room_name:
-        return
-
-    sender_nick = client.nick.encode()
-    msg_bytes = message.encode()
-
-    final_payload = (
-        bytes([len(sender_nick)]) + sender_nick +
-        struct.pack("!H", len(msg_bytes)) + msg_bytes
-    )
-
-    room = rooms[client.room]
-    for other in room.clients:
-        if other.state != ClientState.CLOSING:
-            other.outgoing.append(build_message(0x12, final_payload))
 
     if client.state != ClientState.CLOSING:
         client.outgoing.append(build_message(0x9a, b'\x00'))
@@ -391,7 +360,7 @@ def read_from_client(client):
             elif opcode == 0x0f:
                 handle_nick(client, payload)
             elif opcode == 0x15:
-                handle_no_slash(client, payload)
+                handle_no_slash(client)
             elif opcode == 0x9b:
                 handle_sorting_hat(client)
             elif opcode == 0x13:
