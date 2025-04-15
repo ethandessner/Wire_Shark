@@ -297,15 +297,54 @@ def handle_nick(client, payload: bytes):
     if client.state != ClientState.CLOSING:
         client.outgoing.append(build_message(0x9a, b'\x00'))
 
-def handle_no_slash(client):
+def handle_no_slash(client, payload):
     if not client.room or client.room not in rooms:
         if client.state != ClientState.CLOSING:
             err_msg = b'\x01' + b"You're talking to the walls. No one is here to listen."
             client.outgoing.append(build_message(0x9a, err_msg))
         return
 
+    if len(payload) < 2:
+        return
+
+    room_len = payload[0]
+    print(f"this is the room length {room_len}")
+    if len(payload) < 1 + room_len + 1:
+        return
+
+    room_name = payload[1:1 + room_len].decode()
+    print(f"this is the room name {room_name}")
+    msg_len = payload[1 + room_len + 1]
+
+    if len(payload) < 1 + room_len + 2 + msg_len:
+        return
+
+    message = payload[1 + room_len + 2 : 1 + room_len + 2 + msg_len].decode()
+    print(f"this is the message name {message}")
+
+
+    # ensure client is sending from their current room
+    if client.room != room_name:
+        return
+
+    room_bytes = room_name.encode()
+    nick_bytes = client.nick.encode()
+    msg_bytes = message.encode()
+
+    broadcast_payload = (
+        bytes([len(room_bytes)]) + room_bytes +
+        bytes([len(nick_bytes)]) + nick_bytes + b'\x00' +
+        bytes([len(msg_bytes)]) + msg_bytes
+    )
+    print(f"this is the broadcast message {broadcast_payload}")
+
+    for other in rooms[client.room].clients:
+        if other.state != ClientState.CLOSING and other.nick != client.nick:
+            other.outgoing.append(build_message(0x15, broadcast_payload))
+            
     if client.state != ClientState.CLOSING:
         client.outgoing.append(build_message(0x9a, b'\x00'))
+
 
 def handle_sorting_hat(client):
     base = "rand"
@@ -360,7 +399,7 @@ def read_from_client(client):
             elif opcode == 0x0f:
                 handle_nick(client, payload)
             elif opcode == 0x15:
-                handle_no_slash(client)
+                handle_no_slash(client, payload)
             elif opcode == 0x9b:
                 handle_sorting_hat(client)
             elif opcode == 0x13:
