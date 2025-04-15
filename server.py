@@ -169,7 +169,6 @@ def handle_join(client, payload: bytes):
             client.outgoing.append(build_message(0x9a, err_msg))
         return
 
-    # Switch room if necessary
     if client.room and client.room in rooms:
         old_room = rooms[client.room]
         old_room.remove_client(client)
@@ -196,10 +195,8 @@ def handle_leave(client):
     else:
         print(f"{client.nick} is not in a room, closing connection")
         client.state = ClientState.CLOSING
-        # cleanup_client(client) - this causes an error
 
 def handle_list_users(client):
-    # client seems to handle the errors here
     payload = b'\x00'
     for other in clients.values():
         if other.nick and (client.room is None or other.room == client.room):
@@ -210,7 +207,6 @@ def handle_list_users(client):
         print("LIST USERS RESPONSE BEING SENT:", build_message(0x9a, payload).hex())
 
 def handle_list_rooms(client):
-    # NEED ERROR CODES - ok i think ur good tbh - the client seems to handle this
     payload = b'\x00'
     for room in rooms.values():
         room_bytes = room.name.encode()
@@ -221,18 +217,8 @@ def handle_list_rooms(client):
 
 
 def handle_message(client, payload: bytes):
-    # verifying boundsss:
-    # if len(payload) < 3:
-    #     print("bad msssage formatting you fuck!\n")
-    #     # client.state = ClientState.CLOSING
-    #     return
-    
     target_len = payload[0]
-    # if len(payload) < 1 + target_len + 2:
-    #     print("target length is incorrect!\n")
-    #     # client.state = ClientState.CLOSING
-    #     return
-    
+   
     target_nick = payload[1:1 + target_len].decode()
     msg_len = int.from_bytes(payload[1 + target_len:1 + target_len + 2], 'big')
     print(f'HIIIIII this is the message length: {msg_len}\n')
@@ -311,12 +297,46 @@ def handle_nick(client, payload: bytes):
     if client.state != ClientState.CLOSING:
         client.outgoing.append(build_message(0x9a, b'\x00'))
 
-def handle_no_slash(client):
-    # user input error handled thank god
+def handle_no_slash(client, payload: bytes):
+    if not client.room or client.room not in rooms:
+        if client.state != ClientState.CLOSING:
+            err_msg = b'\x01' + b"You're talking to the walls. No one is here to listen."
+            client.outgoing.append(build_message(0x9a, err_msg))
+        return
+    
+    if len(payload) < 2:
+        return 
+
+    room_len = payload[0]
+    if len(payload) < 1 + room_len + 1:
+        return  
+
+    room_name = payload[1:1 + room_len].decode()
+    msg_len = payload[1 + room_len + 1]
+
+    if len(payload) < 1 + room_len + 2 + msg_len:
+        return 
+
+    message = payload[1 + room_len + 2 : 1 + room_len + 2 + msg_len].decode()
+
+    if client.room != room_name:
+        return
+
+    sender_nick = client.nick.encode()
+    msg_bytes = message.encode()
+
+    final_payload = (
+        bytes([len(sender_nick)]) + sender_nick +
+        struct.pack("!H", len(msg_bytes)) + msg_bytes
+    )
+
+    room = rooms[client.room]
+    for other in room.clients:
+        if other.state != ClientState.CLOSING:
+            other.outgoing.append(build_message(0x12, final_payload))
+
     if client.state != ClientState.CLOSING:
-        err_msg = b'\x01' + b"You're talking to the walls. No one is here to listen."
-        print("NO-SLASH ERROR RESPONSE BEING SENT:", build_message(0x9a, err_msg).hex())
-        client.outgoing.append(build_message(0x9a, err_msg))
+        client.outgoing.append(build_message(0x9a, b'\x00'))
 
 def handle_sorting_hat(client):
     base = "rand"
@@ -330,15 +350,11 @@ def handle_sorting_hat(client):
     client.nick = f"{base}{i}"
     client.state = 'CONNECTED'
 
-    response = b'\x00' + client.nick.encode()  # 0x00 status code + nickname
+    response = b'\x00' + client.nick.encode() 
     if client.state != ClientState.CLOSING:
         client.outgoing.append(build_message(0x9a, response))
     
 def read_from_client(client):
-    # need to account for if the command length is too long
-    # edge cases:
-        # need to disconnect from server if command length is reached - message limit reachs for \msg
-        # deal with username rand assignment
     try:
         data = client.sock.recv(4096)
         print(data)
@@ -347,37 +363,9 @@ def read_from_client(client):
         
         client.buffer += data
 
-        # if client.state == 'HANDSHAKE':
-        #     if b"Is it the Sorting Hat ceremony already?" in client.buffer:
-        #         print("sorting hat!")
-        #         # Assign a unique nickname
-        #         base = "rand"
-        #         if free_indices:
-        #             i = heapq.heappop(free_indices)
-        #         else:
-        #             i = 0
-        #             while i in used_indices:
-        #                 i += 1
-        #         used_indices.add(i)
-        #         client.nick = f"{base}{i}"
-        #         client.state = 'CONNECTED'
-
-        #         opcode = 0x9a  # server response
-        #         payload = b'\x00' + client.nick.encode()  # 0x00 status code + nickname
-        #         if client.state != ClientState.CLOSING:
-        #             client.outgoing.append(build_message(opcode, payload))
-
-        #         # Remove that message from buffer
-        #         client.buffer = b''
-
         while len(client.buffer) >= 7:
             magic = int.from_bytes(client.buffer[4:6], 'big')
             if magic != MAGIC:
-                print(f"this is what is currently in the buffer: {client.buffer}\n")
-                print(f"this is what the magic is: {magic}\n")
-
-                print(f"Invalid magic from {client.addr}; closing.\n")
-                # client.state = 'CLOSING'
                 return False
 
             length = int.from_bytes(client.buffer[0:4], 'big')
@@ -385,10 +373,7 @@ def read_from_client(client):
                 break  # wait for full packet
 
             opcode = client.buffer[6]
-            print(f"this is what the magic is: {magic}\n")
-            print(f"opcode is this {opcode}")
             payload = client.buffer[7:7+length]
-            print(f"this is what is currently in the buffer: {client.buffer}\n")
             client.buffer = client.buffer[7+length:]  # advance buffer
 
             if opcode == 0x03:
@@ -406,17 +391,13 @@ def read_from_client(client):
             elif opcode == 0x0f:
                 handle_nick(client, payload)
             elif opcode == 0x15:
-                handle_no_slash(client)
+                handle_no_slash(client, payload)
             elif opcode == 0x9b:
                 handle_sorting_hat(client)
             elif opcode == 0x13:
                 continue
             else:
                 return False
-
-        # if len(client.buffer) > 128:
-        #     client.state = 'CLOSING'
-
         return True
 
     except Exception as e:
